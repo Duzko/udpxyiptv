@@ -1,4 +1,4 @@
-name: Convert ALL IPTV Lists Automatically
+name: Sync and Convert IPTV Lists
 
 on:
   schedule:
@@ -6,28 +6,26 @@ on:
   workflow_dispatch: 
 
 jobs:
-  convert-all-lists:
+  process-iptv-lists:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      # Đã cập nhật lên v4 để hỗ trợ Node.js mới nhất
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python
-      # Đã cập nhật lên v5 để hỗ trợ Node.js mới nhất
+    - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.x'
 
-    - name: Download and Convert ALL Lists
+    - name: Fetch, Clone, and Convert
       run: |
         python -c '
         import urllib.request
         import json
         import os
 
-        # Cấu hình IP Router của bạn
+        # Router configuration
         ip_router = "192.168.1.1:4022"
         repo_api_url = "https://api.github.com/repos/ntd249/ntdiptv/contents"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -37,64 +35,68 @@ jobs:
             with urllib.request.urlopen(req) as response:
                 files_data = json.loads(response.read().decode("utf-8"))
             
-            if not os.path.exists("converted"):
-                os.makedirs("converted")
+            os.makedirs("converted", exist_ok=True)
 
             for file_info in files_data:
+                # Filter out directories and markdown/hidden files
                 if file_info["type"] != "file" or file_info["name"].endswith(".md") or file_info["name"].startswith("."):
                     continue
                 
                 file_name = file_info["name"]
                 download_url = file_info["download_url"]
-                print(f"Đang xử lý file: {file_name}...")
 
                 file_req = urllib.request.Request(download_url, headers=headers)
                 with urllib.request.urlopen(file_req) as f_res:
                     content = f_res.read().decode("utf-8")
 
+                # Save the exact original file
+                with open(file_name, "w", encoding="utf-8") as orig_f:
+                    orig_f.write(content)
+
+                # Skip conversion if no multicast protocols are found
                 if "udp://" not in content and "rtp://" not in content:
-                    print(f" -> Bỏ qua {file_name} (Không phải list IPTV Multicast)")
                     continue
 
                 lines = content.split("\n")
                 m3u_lines = []
 
+                # Convert multicast links to udpxy HTTP links
                 for line in lines:
                     line = line.strip()
                     if not line:
                         continue
                     
                     if line.startswith("udp://@"):
-                        new_link = line.replace("udp://@", f"http://{ip_router}/udp/")
-                        m3u_lines.append(new_link)
+                        m3u_lines.append(line.replace("udp://@", f"http://{ip_router}/udp/"))
                     elif line.startswith("udp://"):
-                        new_link = line.replace("udp://", f"http://{ip_router}/udp/")
-                        m3u_lines.append(new_link)
+                        m3u_lines.append(line.replace("udp://", f"http://{ip_router}/udp/"))
                     elif line.startswith("rtp://@"):
-                        new_link = line.replace("rtp://@", f"http://{ip_router}/rtp/")
-                        m3u_lines.append(new_link)
+                        m3u_lines.append(line.replace("rtp://@", f"http://{ip_router}/rtp/"))
                     elif line.startswith("rtp://"):
-                        new_link = line.replace("rtp://", f"http://{ip_router}/rtp/")
-                        m3u_lines.append(new_link)
+                        m3u_lines.append(line.replace("rtp://", f"http://{ip_router}/rtp/"))
                     else:
                         m3u_lines.append(line)
 
-                output_path = f"converted/{file_name}.m3u"
+                # Generate a clean filename for the converted output
+                base_name = file_name.replace(".m3u", "")
+                clean_name = base_name.replace("udp", "").replace("rtp", "").strip("-_ ")
+                if not clean_name:
+                    clean_name = "list"
+                
+                converted_file_name = f"{clean_name}_udpxy.m3u"
+                output_path = f"converted/{converted_file_name}"
+                
                 with open(output_path, "w", encoding="utf-8") as out_f:
                     out_f.write("\n".join(m3u_lines))
-                
-                print(f" -> Đã lưu thành công: {output_path}")
-
-            print("Hoàn tất quét và convert toàn bộ Repo!")
 
         except Exception as e:
-            print(f"Lỗi hệ thống: {e}")
+            print(f"Workflow error: {e}")
         '
 
-    - name: Commit and Push changes
+    - name: Commit and Push
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        git add converted/
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Nâng cấp actions versions" && git push)
+        git add .
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Sync original files and generate udpxy lists" && git push)
