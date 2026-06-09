@@ -1,20 +1,22 @@
-name: UDP convert
+name: Convert ALL IPTV Lists Automatically
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0,12 * * *'
   workflow_dispatch: 
-  
+
 jobs:
   convert-all-lists:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      # Đã cập nhật lên v4 để hỗ trợ Node.js mới nhất
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      # Đã cập nhật lên v5 để hỗ trợ Node.js mới nhất
+      uses: actions/setup-python@v5
       with:
         python-version: '3.x'
 
@@ -25,23 +27,20 @@ jobs:
         import json
         import os
 
+        # Cấu hình IP Router của bạn
         ip_router = "192.168.1.1:4022"
         repo_api_url = "https://api.github.com/repos/ntd249/ntdiptv/contents"
         headers = {"User-Agent": "Mozilla/5.0"}
 
         try:
-            # 1. Quét toàn bộ danh sách file trong repo gốc
             req = urllib.request.Request(repo_api_url, headers=headers)
             with urllib.request.urlopen(req) as response:
                 files_data = json.loads(response.read().decode("utf-8"))
             
-            # Tạo thư mục "converted" để chứa các file đã sửa cho gọn gàng (nếu chưa có)
             if not os.path.exists("converted"):
                 os.makedirs("converted")
 
-            # 2. Lặp qua từng file để xử lý
             for file_info in files_data:
-                # Bỏ qua các thư mục hoặc file không cần thiết (như README.md)
                 if file_info["type"] != "file" or file_info["name"].endswith(".md") or file_info["name"].startswith("."):
                     continue
                 
@@ -49,12 +48,10 @@ jobs:
                 download_url = file_info["download_url"]
                 print(f"Đang xử lý file: {file_name}...")
 
-                # Tải nội dung file gốc
                 file_req = urllib.request.Request(download_url, headers=headers)
                 with urllib.request.urlopen(file_req) as f_res:
                     content = f_res.read().decode("utf-8")
 
-                # Kiểm tra nếu file không chứa "udp://" thì bỏ qua, không convert
                 if "udp://" not in content and "rtp://" not in content:
                     print(f" -> Bỏ qua {file_name} (Không phải list IPTV Multicast)")
                     continue
@@ -62,23 +59,26 @@ jobs:
                 lines = content.split("\n")
                 m3u_lines = []
 
-                # Tiến hành Convert
                 for line in lines:
                     line = line.strip()
                     if not line:
                         continue
                     
-                    # Cân được cả định dạng udp://@ và udp:// (không có @)
                     if line.startswith("udp://@"):
                         new_link = line.replace("udp://@", f"http://{ip_router}/udp/")
                         m3u_lines.append(new_link)
                     elif line.startswith("udp://"):
                         new_link = line.replace("udp://", f"http://{ip_router}/udp/")
                         m3u_lines.append(new_link)
+                    elif line.startswith("rtp://@"):
+                        new_link = line.replace("rtp://@", f"http://{ip_router}/rtp/")
+                        m3u_lines.append(new_link)
+                    elif line.startswith("rtp://"):
+                        new_link = line.replace("rtp://", f"http://{ip_router}/rtp/")
+                        m3u_lines.append(new_link)
                     else:
                         m3u_lines.append(line)
 
-                # 3. Lưu file đã convert vào thư mục "converted"
                 output_path = f"converted/{file_name}.m3u"
                 with open(output_path, "w", encoding="utf-8") as out_f:
                     out_f.write("\n".join(m3u_lines))
@@ -96,8 +96,5 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Thêm thư mục converted vào git
         git add converted/
-        
-        # Kiểm tra xem có thay đổi mới không, nếu có thì Commit
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Quét và convert toàn bộ file sang udpxy" && git push)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Nâng cấp actions versions" && git push)
